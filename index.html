@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Team Not Fortress - Fixed</title>
+    <title>Team Not Fortress</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: monospace; cursor: crosshair; }
         #info {
@@ -35,7 +35,7 @@
         ⚔️ TEAM NOT FORTRESS ⚔️<br>
         WASD = Move | Mouse moves camera
     </div>
-    <div id="status">🔒 Camera follows behind player</div>
+    <div id="status">🔒 Loading Striker model...</div>
 
     <script type="importmap">
         {
@@ -75,7 +75,7 @@
         fillLight.position.set(0, 2, 0);
         scene.add(fillLight);
 
-        // --- HELPER VISUALS ---
+        // --- HELPER VISUALS (temporary, will be replaced by arena) ---
         const gridHelper = new THREE.GridHelper(20, 20, 0x88aaff, 0x335588);
         gridHelper.position.y = -0.5;
         scene.add(gridHelper);
@@ -88,62 +88,78 @@
         groundPlane.position.y = -0.5;
         groundPlane.receiveShadow = true;
         scene.add(groundPlane);
+
+        // --- PLAYER (will be replaced by model) ---
+        let currentPlayer = null;
+        let playerPos = { x: 0, z: 0 };
+        let playerRotation = 0;
+        let playerHeight = 1.0; // Will be updated when model loads
         
-        // --- PLAYER (simple cube so you can see it) ---
-        const playerGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-        const playerMat = new THREE.MeshStandardMaterial({ color: 0xff3366 });
-        const player = new THREE.Mesh(playerGeo, playerMat);
-        player.castShadow = true;
-        player.position.set(0, 0, 0);
-        scene.add(player);
-        
-        // Try to load Striker model
+        // --- LOAD STRIKER MODEL (NO CUBE FALLBACK) ---
         const loader = new GLTFLoader();
+        let modelLoaded = false;
+        
         loader.load('striker.glb', (gltf) => {
             const model = gltf.scene;
             model.scale.set(0.7, 0.7, 0.7);
-            model.position.copy(player.position);
+            model.position.set(0, 0, 0);
             model.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
+                    child.receiveShadow = true;
                 }
             });
-            scene.remove(player);
             scene.add(model);
-            window.playerModel = model;
-            console.log('✅ Striker loaded');
+            currentPlayer = model;
+            modelLoaded = true;
+            
+            // Calculate model height
+            const box = new THREE.Box3().setFromObject(model);
+            const height = box.max.y - box.min.y;
+            playerHeight = height * 0.7;
+            
+            document.getElementById('status').innerHTML = '✅ Striker loaded | WASD to move';
+            document.getElementById('status').style.color = '#0f0';
+            console.log('✅ Striker model loaded, height:', playerHeight);
+        }, undefined, (error) => {
+            console.error('Failed to load striker.glb:', error);
+            document.getElementById('status').innerHTML = '❌ striker.glb not found - check file path';
+            document.getElementById('status').style.color = '#f66';
         });
         
-        // Try to load Arena
+        // --- LOAD ARENA (optional) ---
         loader.load('arena.glb', (gltf) => {
             const arena = gltf.scene;
             arena.position.set(0, -1.2, 0);
+            arena.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
             scene.add(arena);
             scene.remove(groundPlane);
             scene.remove(gridHelper);
             console.log('✅ Arena loaded');
+        }, undefined, (error) => {
+            console.log('arena.glb not found, using ground');
         });
 
-        // --- VARIABLES ---
-        let currentPlayer = player;
-        let playerPos = { x: 0, z: 0 };
-        let playerRotation = 0;
-        
-        // Camera: third person, at head height
+        // --- CAMERA SETUP (third person, head height) ---
         let cameraAngle = 0;
         let cameraDistance = 3.5;
-        let cameraHeight = 1.5;  // HEAD HEIGHT (not feet!)
+        let cameraHeight = 1.2; // Default, will update when model loads
         
-        // Movement keys
+        // --- KEYBOARD CONTROLS ---
         const keys = { w: false, s: false, a: false, d: false };
         
-        // --- KEYBOARD ---
         window.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
             if (key === 'w') keys.w = true;
             if (key === 's') keys.s = true;
             if (key === 'a') keys.a = true;
             if (key === 'd') keys.d = true;
+            if (['w','s','a','d'].includes(key)) e.preventDefault();
         });
         
         window.addEventListener('keyup', (e) => {
@@ -154,13 +170,9 @@
             if (key === 'd') keys.d = false;
         });
         
-        // --- MOUSE CONTROL FOR CAMERA ANGLE ---
-        let mouseX = 0;
-        let mouseY = 0;
-        
-        // Simple: mouse moves camera angle around player
+        // --- MOUSE CONTROL FOR CAMERA ---
         document.addEventListener('mousemove', (e) => {
-            if (document.pointerLockElement === renderer.domElement) {
+            if (document.pointerLockElement === renderer.domElement && currentPlayer) {
                 cameraAngle += e.movementX * 0.01;
             }
         });
@@ -181,14 +193,6 @@
             }
         });
         
-        // --- UPDATE PLAYER MODEL REFERENCE ---
-        setInterval(() => {
-            if (window.playerModel && window.playerModel !== currentPlayer) {
-                currentPlayer = window.playerModel;
-                currentPlayer.position.set(playerPos.x, 0, playerPos.z);
-            }
-        }, 100);
-        
         // --- MOVEMENT LOOP ---
         let lastTime = performance.now();
         let speed = 4;
@@ -198,43 +202,48 @@
             let delta = Math.min(0.033, (now - lastTime) / 1000);
             lastTime = now;
             
-            // MOVEMENT (W = forward, S = backward)
-            let moveX = 0;
-            let moveZ = 0;
-            if (keys.w) moveZ -= 1;
-            if (keys.s) moveZ += 1;
-            if (keys.a) moveX -= 1;
-            if (keys.d) moveX += 1;
-            
-            if (moveX !== 0 || moveZ !== 0) {
-                const len = Math.hypot(moveX, moveZ);
-                moveX /= len;
-                moveZ /= len;
+            if (currentPlayer) {
+                // Update camera height based on model
+                cameraHeight = playerHeight + 0.3;
                 
-                playerPos.x += moveX * speed * delta;
-                playerPos.z += moveZ * speed * delta;
+                // MOVEMENT
+                let moveX = 0;
+                let moveZ = 0;
+                if (keys.w) moveZ -= 1;
+                if (keys.s) moveZ += 1;
+                if (keys.a) moveX -= 1;
+                if (keys.d) moveX += 1;
                 
-                // Rotate player to face movement direction
-                playerRotation = Math.atan2(moveX, moveZ);
-                currentPlayer.rotation.y = playerRotation;
+                if (moveX !== 0 || moveZ !== 0) {
+                    const len = Math.hypot(moveX, moveZ);
+                    moveX /= len;
+                    moveZ /= len;
+                    
+                    playerPos.x += moveX * speed * delta;
+                    playerPos.z += moveZ * speed * delta;
+                    
+                    // Rotate player to face movement direction
+                    playerRotation = Math.atan2(moveX, moveZ);
+                    currentPlayer.rotation.y = playerRotation;
+                }
+                
+                // Boundaries
+                playerPos.x = Math.max(-7, Math.min(7, playerPos.x));
+                playerPos.z = Math.max(-7, Math.min(7, playerPos.z));
+                
+                // Update player position
+                currentPlayer.position.x = playerPos.x;
+                currentPlayer.position.z = playerPos.z;
+                currentPlayer.position.y = 0;
+                
+                // THIRD PERSON CAMERA (behind player, at HEAD HEIGHT)
+                const camX = playerPos.x - Math.sin(cameraAngle) * cameraDistance;
+                const camZ = playerPos.z - Math.cos(cameraAngle) * cameraDistance;
+                const camY = cameraHeight;
+                
+                camera.position.set(camX, camY, camZ);
+                camera.lookAt(playerPos.x, cameraHeight - 0.3, playerPos.z);
             }
-            
-            // Boundaries
-            playerPos.x = Math.max(-7, Math.min(7, playerPos.x));
-            playerPos.z = Math.max(-7, Math.min(7, playerPos.z));
-            
-            // Update player position
-            currentPlayer.position.x = playerPos.x;
-            currentPlayer.position.z = playerPos.z;
-            currentPlayer.position.y = 0;
-            
-            // THIRD PERSON CAMERA (behind player, at HEAD HEIGHT)
-            const camX = playerPos.x - Math.sin(cameraAngle) * cameraDistance;
-            const camZ = playerPos.z - Math.cos(cameraAngle) * cameraDistance;
-            const camY = cameraHeight;  // HEAD LEVEL
-            
-            camera.position.set(camX, camY, camZ);
-            camera.lookAt(playerPos.x, cameraHeight * 0.7, playerPos.z);
             
             renderer.render(scene, camera);
             requestAnimationFrame(update);
@@ -248,7 +257,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Fixed: W = forward, S = backward, camera at head height');
+        console.log('Team Not Fortress - Using striker.glb only');
     </script>
 </body>
 </html>
