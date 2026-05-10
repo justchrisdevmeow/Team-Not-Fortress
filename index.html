@@ -75,7 +75,7 @@
         fillLight.position.set(0, 2, 0);
         scene.add(fillLight);
 
-        // --- HELPER VISUALS (temporary, will be replaced by arena) ---
+        // --- HELPER VISUALS ---
         const gridHelper = new THREE.GridHelper(20, 20, 0x88aaff, 0x335588);
         gridHelper.position.y = -0.5;
         scene.add(gridHelper);
@@ -89,15 +89,19 @@
         groundPlane.receiveShadow = true;
         scene.add(groundPlane);
 
-        // --- PLAYER (will be replaced by model) ---
+        // --- PLAYER ---
         let currentPlayer = null;
         let playerPos = { x: 0, z: 0 };
         let playerRotation = 0;
-        let playerHeight = 1.0; // Will be updated when model loads
+        let playerHeight = 1.5; // Default, will update when model loads
         
-        // --- LOAD STRIKER MODEL (NO CUBE FALLBACK) ---
+        // --- CAMERA SETTINGS (ADJUST THESE) ---
+        let cameraAngle = 0;
+        let cameraDistance = 5;    // Increased from 3.5 to 5 (farther back)
+        let cameraHeight = 2.2;    // Increased from 1.2 to 2.2 (higher up, above head)
+        
+        // --- LOAD STRIKER MODEL ---
         const loader = new GLTFLoader();
-        let modelLoaded = false;
         
         loader.load('striker.glb', (gltf) => {
             const model = gltf.scene;
@@ -111,23 +115,25 @@
             });
             scene.add(model);
             currentPlayer = model;
-            modelLoaded = true;
             
             // Calculate model height
             const box = new THREE.Box3().setFromObject(model);
             const height = box.max.y - box.min.y;
-            playerHeight = height * 0.7;
+            playerHeight = height;
             
-            document.getElementById('status').innerHTML = '✅ Striker loaded | WASD to move';
+            // Adjust camera height based on model (above head)
+            cameraHeight = playerHeight * 1.2;
+            
+            document.getElementById('status').innerHTML = '✅ Striker loaded | Camera higher + farther';
             document.getElementById('status').style.color = '#0f0';
-            console.log('✅ Striker model loaded, height:', playerHeight);
+            console.log('✅ Model height:', playerHeight, 'Camera height:', cameraHeight);
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
-            document.getElementById('status').innerHTML = '❌ striker.glb not found - check file path';
+            document.getElementById('status').innerHTML = '❌ striker.glb not found';
             document.getElementById('status').style.color = '#f66';
         });
         
-        // --- LOAD ARENA (optional) ---
+        // --- LOAD ARENA ---
         loader.load('arena.glb', (gltf) => {
             const arena = gltf.scene;
             arena.position.set(0, -1.2, 0);
@@ -145,11 +151,6 @@
             console.log('arena.glb not found, using ground');
         });
 
-        // --- CAMERA SETUP (third person, head height) ---
-        let cameraAngle = 0;
-        let cameraDistance = 3.5;
-        let cameraHeight = 1.2; // Default, will update when model loads
-        
         // --- KEYBOARD CONTROLS ---
         const keys = { w: false, s: false, a: false, d: false };
         
@@ -170,14 +171,13 @@
             if (key === 'd') keys.d = false;
         });
         
-        // --- MOUSE CONTROL FOR CAMERA ---
+        // --- MOUSE CONTROL ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
-                cameraAngle += e.movementX * 0.01;
+                cameraAngle += e.movementX * 0.008;
             }
         });
         
-        // Click to lock mouse
         renderer.domElement.addEventListener('click', () => {
             renderer.domElement.requestPointerLock();
         });
@@ -185,10 +185,10 @@
         document.addEventListener('pointerlockchange', () => {
             const status = document.getElementById('status');
             if (document.pointerLockElement === renderer.domElement) {
-                status.innerHTML = '🎯 Mouse locked | WASD to move';
+                status.innerHTML = '🎯 Mouse locked | Camera higher + farther';
                 status.style.color = '#0f0';
             } else {
-                status.innerHTML = '🔒 Click to lock mouse and move camera';
+                status.innerHTML = '🔒 Click to lock mouse';
                 status.style.color = '#ffaa44';
             }
         });
@@ -203,9 +203,6 @@
             lastTime = now;
             
             if (currentPlayer) {
-                // Update camera height based on model
-                cameraHeight = playerHeight + 0.3;
-                
                 // MOVEMENT
                 let moveX = 0;
                 let moveZ = 0;
@@ -222,7 +219,6 @@
                     playerPos.x += moveX * speed * delta;
                     playerPos.z += moveZ * speed * delta;
                     
-                    // Rotate player to face movement direction
                     playerRotation = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = playerRotation;
                 }
@@ -236,13 +232,13 @@
                 currentPlayer.position.z = playerPos.z;
                 currentPlayer.position.y = 0;
                 
-                // THIRD PERSON CAMERA (behind player, at HEAD HEIGHT)
+                // THIRD PERSON CAMERA (higher up, farther back)
                 const camX = playerPos.x - Math.sin(cameraAngle) * cameraDistance;
                 const camZ = playerPos.z - Math.cos(cameraAngle) * cameraDistance;
                 const camY = cameraHeight;
                 
                 camera.position.set(camX, camY, camZ);
-                camera.lookAt(playerPos.x, cameraHeight - 0.3, playerPos.z);
+                camera.lookAt(playerPos.x, cameraHeight - 0.8, playerPos.z);
             }
             
             renderer.render(scene, camera);
@@ -257,7 +253,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Using striker.glb only');
+        console.log('Team Not Fortress - Camera: distance=5, height=2.2');
     </script>
 </body>
 </html>
