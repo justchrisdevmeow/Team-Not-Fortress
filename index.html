@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Team Not Fortress - 3rd Person</title>
+    <title>Team Not Fortress - Fixed</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: monospace; cursor: crosshair; }
         #info {
@@ -12,14 +12,12 @@
             left: 20px;
             background: rgba(0,0,0,0.7);
             color: #0f0;
-            padding: 10px 15px;
+            padding: 10px;
             border-radius: 5px;
             z-index: 100;
-            pointer-events: none;
             font-size: 12px;
-            border-left: 3px solid #ff6600;
         }
-        #controls-status {
+        #status {
             position: absolute;
             bottom: 20px;
             left: 20px;
@@ -28,18 +26,16 @@
             padding: 5px 10px;
             border-radius: 5px;
             font-size: 11px;
-            font-family: monospace;
             pointer-events: none;
-            z-index: 100;
         }
     </style>
 </head>
 <body>
     <div id="info">
         ⚔️ TEAM NOT FORTRESS ⚔️<br>
-        WASD = Move | Mouse = Look | Click to lock cursor
+        WASD = Move | Mouse moves camera
     </div>
-    <div id="controls-status">🔒 Click screen to lock mouse</div>
+    <div id="status">🔒 Camera follows behind player</div>
 
     <script type="importmap">
         {
@@ -75,15 +71,11 @@
         dirLight.castShadow = true;
         scene.add(dirLight);
         
-        const fillLight = new THREE.PointLight(0x4466cc, 0.4);
+        const fillLight = new THREE.PointLight(0x4466cc, 0.5);
         fillLight.position.set(0, 2, 0);
         scene.add(fillLight);
-        
-        const backLight = new THREE.PointLight(0xffaa66, 0.3);
-        backLight.position.set(0, 2, -4);
-        scene.add(backLight);
 
-        // --- SIMPLE GROUND ---
+        // --- HELPER VISUALS ---
         const gridHelper = new THREE.GridHelper(20, 20, 0x88aaff, 0x335588);
         gridHelper.position.y = -0.5;
         scene.add(gridHelper);
@@ -97,117 +89,61 @@
         groundPlane.receiveShadow = true;
         scene.add(groundPlane);
         
-        // Center marker
-        const centerMarker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.15, 6, 6),
-            new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0x331100 })
-        );
-        centerMarker.position.set(0, 0, 0);
-        scene.add(centerMarker);
-
-        // --- PLAYER (cube for now) ---
+        // --- PLAYER (simple cube so you can see it) ---
         const playerGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-        const playerMat = new THREE.MeshStandardMaterial({ color: 0xff3366, emissive: 0x331122 });
+        const playerMat = new THREE.MeshStandardMaterial({ color: 0xff3366 });
         const player = new THREE.Mesh(playerGeo, playerMat);
         player.castShadow = true;
         player.position.set(0, 0, 0);
         scene.add(player);
         
-        // Add a visual "front" indicator on player
-        const frontIndicator = new THREE.Mesh(
-            new THREE.SphereGeometry(0.15, 4, 4),
-            new THREE.MeshStandardMaterial({ color: 0xffaa44 })
-        );
-        frontIndicator.position.set(0, 0.5, 0.5);
-        player.add(frontIndicator);
-        
-        let activePlayer = player;
-        let playerHeight = 0.8; // Height of player model
-        
         // Try to load Striker model
         const loader = new GLTFLoader();
         loader.load('striker.glb', (gltf) => {
             const model = gltf.scene;
-            model.scale.set(0.8, 0.8, 0.8);
+            model.scale.set(0.7, 0.7, 0.7);
             model.position.copy(player.position);
             model.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
-                    child.receiveShadow = true;
                 }
             });
             scene.remove(player);
             scene.add(model);
-            activePlayer = model;
-            playerHeight = 1.2; // Model is taller
-            console.log('✅ Striker model loaded');
-        }, undefined, (error) => console.log('Using cube fallback'));
+            window.playerModel = model;
+            console.log('✅ Striker loaded');
+        });
         
         // Try to load Arena
         loader.load('arena.glb', (gltf) => {
             const arena = gltf.scene;
             arena.position.set(0, -1.2, 0);
-            arena.traverse((child) => {
-                if (child.isMesh) {
-                    child.castShadow = true;
-                    child.receiveShadow = true;
-                }
-            });
             scene.add(arena);
             scene.remove(groundPlane);
             scene.remove(gridHelper);
             console.log('✅ Arena loaded');
-        }, undefined, (error) => console.log('Using ground fallback'));
-
-        // --- MOUSE LOCK + CAMERA CONTROL ---
-        let mouseX = 0;
-        let mouseY = 0;
-        let yaw = -Math.PI / 4;  // horizontal angle
-        let pitch = 0;            // vertical angle
-        let cameraDistance = 4;   // distance behind player
-        
-        // Camera offset for third person
-        let cameraOffset = new THREE.Vector3(0, 1.5, 3); // x, y, z offset
-        
-        // Pointer lock
-        renderer.domElement.addEventListener('click', () => {
-            renderer.domElement.requestPointerLock();
         });
+
+        // --- VARIABLES ---
+        let currentPlayer = player;
+        let playerPos = { x: 0, z: 0 };
+        let playerRotation = 0;
         
-        document.addEventListener('pointerlockchange', lockChange);
+        // Camera: third person, at head height
+        let cameraAngle = 0;
+        let cameraDistance = 3.5;
+        let cameraHeight = 1.5;  // HEAD HEIGHT (not feet!)
         
-        function lockChange() {
-            if (document.pointerLockElement === renderer.domElement) {
-                document.addEventListener('mousemove', onMouseMove);
-                document.getElementById('controls-status').innerHTML = '🎯 MOUSE LOCKED | WASD to move | ESC to unlock';
-                document.getElementById('controls-status').style.color = '#00ff66';
-            } else {
-                document.removeEventListener('mousemove', onMouseMove);
-                document.getElementById('controls-status').innerHTML = '🔒 Click screen to lock mouse';
-                document.getElementById('controls-status').style.color = '#ffaa44';
-            }
-        }
-        
-        function onMouseMove(e) {
-            yaw -= e.movementX * 0.008;
-            pitch -= e.movementY * 0.008;
-            // Limit pitch to prevent flipping
-            pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
-        }
-        
-        // --- KEYBOARD CONTROLS ---
+        // Movement keys
         const keys = { w: false, s: false, a: false, d: false };
         
+        // --- KEYBOARD ---
         window.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
             if (key === 'w') keys.w = true;
             if (key === 's') keys.s = true;
             if (key === 'a') keys.a = true;
             if (key === 'd') keys.d = true;
-            // Prevent default scrolling
-            if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
-                e.preventDefault();
-            }
         });
         
         window.addEventListener('keyup', (e) => {
@@ -218,70 +154,93 @@
             if (key === 'd') keys.d = false;
         });
         
-        let playerPos = new THREE.Vector3(0, 0, 0);
-        let moveSpeed = 5;
+        // --- MOUSE CONTROL FOR CAMERA ANGLE ---
+        let mouseX = 0;
+        let mouseY = 0;
         
-        // --- UPDATE FUNCTION ---
-        let lastTime = performance.now();
-        
-        function updateMovement(deltaTime) {
-            // Calculate movement direction based on camera angle
-            let moveDir = new THREE.Vector3(0, 0, 0);
-            
-            if (keys.w) moveDir.z -= 1;
-            if (keys.s) moveDir.z += 1;
-            if (keys.a) moveDir.x -= 1;
-            if (keys.d) moveDir.x += 1;
-            
-            if (moveDir.length() > 0) moveDir.normalize();
-            
-            // Rotate movement direction by yaw
-            const rotatedMove = new THREE.Vector3(
-                moveDir.x * Math.cos(yaw) - moveDir.z * Math.sin(yaw),
-                0,
-                moveDir.x * Math.sin(yaw) + moveDir.z * Math.cos(yaw)
-            );
-            
-            // Update position
-            playerPos.x += rotatedMove.x * moveSpeed * deltaTime;
-            playerPos.z += rotatedMove.z * moveSpeed * deltaTime;
-            
-            // Boundaries
-            playerPos.x = Math.max(-8, Math.min(8, playerPos.x));
-            playerPos.z = Math.max(-8, Math.min(8, playerPos.z));
-            
-            // Apply to player model
-            activePlayer.position.copy(playerPos);
-            
-            // Rotate player to face movement direction if moving
-            if (moveDir.x !== 0 || moveDir.z !== 0) {
-                const facingAngle = Math.atan2(rotatedMove.x, rotatedMove.z);
-                activePlayer.rotation.y = facingAngle;
+        // Simple: mouse moves camera angle around player
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === renderer.domElement) {
+                cameraAngle += e.movementX * 0.01;
             }
-            
-            // Calculate camera position (third person)
-            // Camera follows behind player, rotated by yaw
-            const camX = playerPos.x - Math.sin(yaw) * cameraOffset.z;
-            const camZ = playerPos.z - Math.cos(yaw) * cameraOffset.z;
-            const camY = playerPos.y + cameraOffset.y + (playerHeight * 0.7);
-            
-            camera.position.set(camX, camY, camZ);
-            camera.lookAt(playerPos.x, playerPos.y + playerHeight * 0.6, playerPos.z);
-        }
+        });
         
-        // --- ANIMATION LOOP ---
-        function animate() {
+        // Click to lock mouse
+        renderer.domElement.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+        
+        document.addEventListener('pointerlockchange', () => {
+            const status = document.getElementById('status');
+            if (document.pointerLockElement === renderer.domElement) {
+                status.innerHTML = '🎯 Mouse locked | WASD to move';
+                status.style.color = '#0f0';
+            } else {
+                status.innerHTML = '🔒 Click to lock mouse and move camera';
+                status.style.color = '#ffaa44';
+            }
+        });
+        
+        // --- UPDATE PLAYER MODEL REFERENCE ---
+        setInterval(() => {
+            if (window.playerModel && window.playerModel !== currentPlayer) {
+                currentPlayer = window.playerModel;
+                currentPlayer.position.set(playerPos.x, 0, playerPos.z);
+            }
+        }, 100);
+        
+        // --- MOVEMENT LOOP ---
+        let lastTime = performance.now();
+        let speed = 4;
+        
+        function update() {
             const now = performance.now();
             let delta = Math.min(0.033, (now - lastTime) / 1000);
             lastTime = now;
             
-            updateMovement(delta);
+            // MOVEMENT (W = forward, S = backward)
+            let moveX = 0;
+            let moveZ = 0;
+            if (keys.w) moveZ -= 1;
+            if (keys.s) moveZ += 1;
+            if (keys.a) moveX -= 1;
+            if (keys.d) moveX += 1;
+            
+            if (moveX !== 0 || moveZ !== 0) {
+                const len = Math.hypot(moveX, moveZ);
+                moveX /= len;
+                moveZ /= len;
+                
+                playerPos.x += moveX * speed * delta;
+                playerPos.z += moveZ * speed * delta;
+                
+                // Rotate player to face movement direction
+                playerRotation = Math.atan2(moveX, moveZ);
+                currentPlayer.rotation.y = playerRotation;
+            }
+            
+            // Boundaries
+            playerPos.x = Math.max(-7, Math.min(7, playerPos.x));
+            playerPos.z = Math.max(-7, Math.min(7, playerPos.z));
+            
+            // Update player position
+            currentPlayer.position.x = playerPos.x;
+            currentPlayer.position.z = playerPos.z;
+            currentPlayer.position.y = 0;
+            
+            // THIRD PERSON CAMERA (behind player, at HEAD HEIGHT)
+            const camX = playerPos.x - Math.sin(cameraAngle) * cameraDistance;
+            const camZ = playerPos.z - Math.cos(cameraAngle) * cameraDistance;
+            const camY = cameraHeight;  // HEAD LEVEL
+            
+            camera.position.set(camX, camY, camZ);
+            camera.lookAt(playerPos.x, cameraHeight * 0.7, playerPos.z);
             
             renderer.render(scene, camera);
-            requestAnimationFrame(animate);
+            requestAnimationFrame(update);
         }
         
-        animate();
+        update();
         
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -289,8 +248,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Third Person with Mouse Lock');
-        console.log('Click screen, then use WASD and mouse');
+        console.log('Team Not Fortress - Fixed: W = forward, S = backward, camera at head height');
     </script>
 </body>
 </html>
