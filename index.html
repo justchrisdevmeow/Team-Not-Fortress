@@ -35,7 +35,7 @@
         ⚔️ TEAM NOT FORTRESS ⚔️<br>
         WASD = Move | Mouse moves camera
     </div>
-    <div id="status">🔒 Loading Striker model...</div>
+    <div id="status">🔒 Loading...</div>
 
     <script type="importmap">
         {
@@ -72,40 +72,41 @@
         scene.add(dirLight);
         
         const fillLight = new THREE.PointLight(0x4466cc, 0.5);
-        fillLight.position.set(0, 2, 0);
+        fillLight.position.set(0, 3, 0);
         scene.add(fillLight);
 
-        // --- HELPER VISUALS ---
-        const gridHelper = new THREE.GridHelper(20, 20, 0x88aaff, 0x335588);
-        gridHelper.position.y = -0.5;
-        scene.add(gridHelper);
-        
+        // --- TEMPORARY GROUND (will be replaced by arena) ---
         const groundPlane = new THREE.Mesh(
-            new THREE.PlaneGeometry(20, 20),
+            new THREE.PlaneGeometry(30, 30),
             new THREE.MeshStandardMaterial({ color: 0x226622, roughness: 0.8 })
         );
         groundPlane.rotation.x = -Math.PI / 2;
         groundPlane.position.y = -0.5;
         groundPlane.receiveShadow = true;
         scene.add(groundPlane);
+        
+        const gridHelper = new THREE.GridHelper(30, 30, 0x88aaff, 0x335588);
+        gridHelper.position.y = -0.4;
+        scene.add(gridHelper);
 
         // --- PLAYER ---
         let currentPlayer = null;
         let playerPos = { x: 0, z: 0 };
         let playerRotation = 0;
-        let playerHeight = 1.5; // Default, will update when model loads
         
-        // --- CAMERA SETTINGS (ADJUST THESE) ---
+        // --- CAMERA SETTINGS ---
         let cameraAngle = 0;
-        let cameraDistance = 5;    // Increased from 3.5 to 5 (farther back)
-        let cameraHeight = 2.2;    // Increased from 1.2 to 2.2 (higher up, above head)
+        let cameraDistance = 6;
+        let cameraHeight = 3;
         
-        // --- LOAD STRIKER MODEL ---
+        // --- LOAD STRIKER MODEL (SCALED DOWN) ---
         const loader = new GLTFLoader();
         
         loader.load('striker.glb', (gltf) => {
             const model = gltf.scene;
-            model.scale.set(0.7, 0.7, 0.7);
+            // SCALE DOWN - model was 58 units tall, scale to 1.5 units tall
+            const scale = 0.025;
+            model.scale.set(scale, scale, scale);
             model.position.set(0, 0, 0);
             model.traverse((child) => {
                 if (child.isMesh) {
@@ -116,27 +117,20 @@
             scene.add(model);
             currentPlayer = model;
             
-            // Calculate model height
-            const box = new THREE.Box3().setFromObject(model);
-            const height = box.max.y - box.min.y;
-            playerHeight = height;
-            
-            // Adjust camera height based on model (above head)
-            cameraHeight = playerHeight * 1.2;
-            
-            document.getElementById('status').innerHTML = '✅ Striker loaded | Camera higher + farther';
+            document.getElementById('status').innerHTML = '✅ Striker loaded (scaled) | Camera fixed';
             document.getElementById('status').style.color = '#0f0';
-            console.log('✅ Model height:', playerHeight, 'Camera height:', cameraHeight);
+            console.log('✅ Model scaled down');
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
             document.getElementById('status').innerHTML = '❌ striker.glb not found';
             document.getElementById('status').style.color = '#f66';
         });
         
-        // --- LOAD ARENA ---
+        // --- LOAD ARENA (FIXED POSITION) ---
         loader.load('arena.glb', (gltf) => {
             const arena = gltf.scene;
-            arena.position.set(0, -1.2, 0);
+            // Arena at ground level, not -1.2
+            arena.position.set(0, 0, 0);
             arena.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
@@ -144,9 +138,10 @@
                 }
             });
             scene.add(arena);
+            // Remove temporary ground
             scene.remove(groundPlane);
             scene.remove(gridHelper);
-            console.log('✅ Arena loaded');
+            console.log('✅ Arena loaded at ground level');
         }, undefined, (error) => {
             console.log('arena.glb not found, using ground');
         });
@@ -171,9 +166,10 @@
             if (key === 'd') keys.d = false;
         });
         
-        // --- MOUSE CONTROL ---
+        // --- MOUSE CONTROL (FIXED: RIGHT = TURN RIGHT) ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
+                // FIXED: positive movementX = turn right (increase angle)
                 cameraAngle += e.movementX * 0.008;
             }
         });
@@ -185,7 +181,7 @@
         document.addEventListener('pointerlockchange', () => {
             const status = document.getElementById('status');
             if (document.pointerLockElement === renderer.domElement) {
-                status.innerHTML = '🎯 Mouse locked | Camera higher + farther';
+                status.innerHTML = '🎯 Mouse locked | Move mouse to look around';
                 status.style.color = '#0f0';
             } else {
                 status.innerHTML = '🔒 Click to lock mouse';
@@ -195,7 +191,7 @@
         
         // --- MOVEMENT LOOP ---
         let lastTime = performance.now();
-        let speed = 4;
+        let speed = 5;
         
         function update() {
             const now = performance.now();
@@ -216,29 +212,35 @@
                     moveX /= len;
                     moveZ /= len;
                     
-                    playerPos.x += moveX * speed * delta;
-                    playerPos.z += moveZ * speed * delta;
+                    // Move relative to camera angle
+                    const forwardX = Math.sin(cameraAngle);
+                    const forwardZ = Math.cos(cameraAngle);
+                    const rightX = Math.cos(cameraAngle);
+                    const rightZ = -Math.sin(cameraAngle);
+                    
+                    playerPos.x += (moveX * rightX + moveZ * forwardX) * speed * delta;
+                    playerPos.z += (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
                     playerRotation = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = playerRotation;
                 }
                 
-                // Boundaries
-                playerPos.x = Math.max(-7, Math.min(7, playerPos.x));
-                playerPos.z = Math.max(-7, Math.min(7, playerPos.z));
+                // Boundaries (larger arena)
+                playerPos.x = Math.max(-12, Math.min(12, playerPos.x));
+                playerPos.z = Math.max(-12, Math.min(12, playerPos.z));
                 
                 // Update player position
                 currentPlayer.position.x = playerPos.x;
                 currentPlayer.position.z = playerPos.z;
                 currentPlayer.position.y = 0;
                 
-                // THIRD PERSON CAMERA (higher up, farther back)
+                // THIRD PERSON CAMERA
                 const camX = playerPos.x - Math.sin(cameraAngle) * cameraDistance;
                 const camZ = playerPos.z - Math.cos(cameraAngle) * cameraDistance;
                 const camY = cameraHeight;
                 
                 camera.position.set(camX, camY, camZ);
-                camera.lookAt(playerPos.x, cameraHeight - 0.8, playerPos.z);
+                camera.lookAt(playerPos.x, 1.2, playerPos.z);
             }
             
             renderer.render(scene, camera);
@@ -253,7 +255,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Camera: distance=5, height=2.2');
+        console.log('Team Not Fortress - Fixed: mouse direction, arena position, model scale');
     </script>
 </body>
 </html>
