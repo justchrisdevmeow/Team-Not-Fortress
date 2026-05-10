@@ -33,7 +33,7 @@
 <body>
     <div id="info">
         ⚔️ TEAM NOT FORTRESS ⚔️<br>
-        WASD = Move | Mouse moves camera
+        WASD = Move | Mouse looks around
     </div>
     <div id="status">🔒 Loading...</div>
 
@@ -75,36 +75,24 @@
         fillLight.position.set(0, 3, 0);
         scene.add(fillLight);
 
-        // --- TEMPORARY GROUND (will be replaced by arena) ---
-        const groundPlane = new THREE.Mesh(
-            new THREE.PlaneGeometry(30, 30),
-            new THREE.MeshStandardMaterial({ color: 0x226622, roughness: 0.8 })
-        );
-        groundPlane.rotation.x = -Math.PI / 2;
-        groundPlane.position.y = -0.5;
-        groundPlane.receiveShadow = true;
-        scene.add(groundPlane);
-        
-        const gridHelper = new THREE.GridHelper(30, 30, 0x88aaff, 0x335588);
-        gridHelper.position.y = -0.4;
-        scene.add(gridHelper);
-
         // --- PLAYER ---
         let currentPlayer = null;
-        let playerPos = { x: 0, z: 0 };
-        let playerRotation = 0;
+        let playerPos = { x: 0, y: 0, z: 0 };
+        let playerVelocityY = 0;
+        let isGrounded = false;
+        let gravity = 20;
+        let jumpPower = 8;
         
         // --- CAMERA SETTINGS ---
-        let cameraAngle = 0;
-        let cameraDistance = 6;
-        let cameraHeight = 3;
+        let cameraAngleX = 0;  // left/right
+        let cameraAngleY = 0;  // up/down
+        let cameraDistance = 5;
         
-        // --- LOAD STRIKER MODEL (SCALED DOWN) ---
+        // --- LOAD STRIKER MODEL ---
         const loader = new GLTFLoader();
         
         loader.load('striker.glb', (gltf) => {
             const model = gltf.scene;
-            // SCALE DOWN - model was 58 units tall, scale to 1.5 units tall
             const scale = 0.025;
             model.scale.set(scale, scale, scale);
             model.position.set(0, 0, 0);
@@ -117,37 +105,34 @@
             scene.add(model);
             currentPlayer = model;
             
-            document.getElementById('status').innerHTML = '✅ Striker loaded (scaled) | Camera fixed';
+            document.getElementById('status').innerHTML = '✅ Striker loaded | WASD to move';
             document.getElementById('status').style.color = '#0f0';
-            console.log('✅ Model scaled down');
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
             document.getElementById('status').innerHTML = '❌ striker.glb not found';
             document.getElementById('status').style.color = '#f66';
         });
         
-        // --- LOAD ARENA (FIXED POSITION) ---
+        // --- LOAD ARENA (center it at 0,0,0) ---
+        let arenaMesh = null;
         loader.load('arena.glb', (gltf) => {
-            const arena = gltf.scene;
-            // Arena at ground level, not -1.2
-            arena.position.set(0, 0, 0);
-            arena.traverse((child) => {
+            arenaMesh = gltf.scene;
+            // Center the arena at origin
+            arenaMesh.position.set(0, 0, 0);
+            arenaMesh.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
                 }
             });
-            scene.add(arena);
-            // Remove temporary ground
-            scene.remove(groundPlane);
-            scene.remove(gridHelper);
-            console.log('✅ Arena loaded at ground level');
+            scene.add(arenaMesh);
+            console.log('✅ Arena loaded at center');
         }, undefined, (error) => {
-            console.log('arena.glb not found, using ground');
+            console.log('arena.glb not found');
         });
 
-        // --- KEYBOARD CONTROLS ---
-        const keys = { w: false, s: false, a: false, d: false };
+        // --- KEYBOARD CONTROLS (CORRECT: W=forward, S=back, A=left, D=right) ---
+        const keys = { w: false, s: false, a: false, d: false, space: false };
         
         window.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
@@ -155,7 +140,13 @@
             if (key === 's') keys.s = true;
             if (key === 'a') keys.a = true;
             if (key === 'd') keys.d = true;
-            if (['w','s','a','d'].includes(key)) e.preventDefault();
+            if (key === ' ') {
+                keys.space = true;
+                e.preventDefault();
+            }
+            if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
+                e.preventDefault();
+            }
         });
         
         window.addEventListener('keyup', (e) => {
@@ -164,13 +155,17 @@
             if (key === 's') keys.s = false;
             if (key === 'a') keys.a = false;
             if (key === 'd') keys.d = false;
+            if (key === ' ') keys.space = false;
         });
         
-        // --- MOUSE CONTROL (FIXED: RIGHT = TURN RIGHT) ---
+        // --- MOUSE CONTROL (FIXED: correct direction) ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
-                // FIXED: positive movementX = turn right (increase angle)
-                cameraAngle += e.movementX * 0.008;
+                // Horizontal: move mouse right = look right (increase angle)
+                cameraAngleX += e.movementX * 0.008;
+                // Vertical: move mouse up = look up
+                cameraAngleY += e.movementY * 0.008;
+                cameraAngleY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleY));
             }
         });
         
@@ -181,13 +176,34 @@
         document.addEventListener('pointerlockchange', () => {
             const status = document.getElementById('status');
             if (document.pointerLockElement === renderer.domElement) {
-                status.innerHTML = '🎯 Mouse locked | Move mouse to look around';
+                status.innerHTML = '🎯 Mouse locked | WASD moves | Space jumps';
                 status.style.color = '#0f0';
             } else {
                 status.innerHTML = '🔒 Click to lock mouse';
                 status.style.color = '#ffaa44';
             }
         });
+        
+        // --- RAYCASTING COLLISION ---
+        function checkCollisionAndGround(pos) {
+            let groundY = -0.5;
+            let foundGround = false;
+            
+            if (arenaMesh) {
+                // Raycast downward to find ground
+                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 2, pos.z);
+                const rayDirection = new THREE.Vector3(0, -1, 0);
+                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 5);
+                const intersects = raycaster.intersectObject(arenaMesh, true);
+                
+                if (intersects.length > 0) {
+                    groundY = intersects[0].point.y;
+                    foundGround = true;
+                }
+            }
+            
+            return { groundY, foundGround };
+        }
         
         // --- MOVEMENT LOOP ---
         let lastTime = performance.now();
@@ -199,48 +215,75 @@
             lastTime = now;
             
             if (currentPlayer) {
-                // MOVEMENT
+                // --- GRAVITY AND COLLISION ---
+                const groundCheck = checkCollisionAndGround(playerPos);
+                const groundY = groundCheck.groundY;
+                const onGround = playerPos.y <= groundY + 0.2;
+                
+                if (onGround) {
+                    playerVelocityY = 0;
+                    playerPos.y = groundY + 0.1;
+                    isGrounded = true;
+                    
+                    // Jump
+                    if (keys.space) {
+                        playerVelocityY = jumpPower;
+                        isGrounded = false;
+                        keys.space = false; // Single jump
+                    }
+                } else {
+                    playerVelocityY -= gravity * delta;
+                    playerPos.y += playerVelocityY * delta;
+                    isGrounded = false;
+                }
+                
+                // --- MOVEMENT (CORRECT: W=forward, S=backward) ---
                 let moveX = 0;
                 let moveZ = 0;
-                if (keys.w) moveZ -= 1;
-                if (keys.s) moveZ += 1;
-                if (keys.a) moveX -= 1;
-                if (keys.d) moveX += 1;
+                if (keys.w) moveZ -= 1;  // W = forward
+                if (keys.s) moveZ += 1;  // S = backward
+                if (keys.a) moveX -= 1;  // A = left
+                if (keys.d) moveX += 1;  // D = right
                 
                 if (moveX !== 0 || moveZ !== 0) {
                     const len = Math.hypot(moveX, moveZ);
                     moveX /= len;
                     moveZ /= len;
                     
-                    // Move relative to camera angle
-                    const forwardX = Math.sin(cameraAngle);
-                    const forwardZ = Math.cos(cameraAngle);
-                    const rightX = Math.cos(cameraAngle);
-                    const rightZ = -Math.sin(cameraAngle);
+                    // Move relative to camera direction
+                    const forwardX = Math.sin(cameraAngleX);
+                    const forwardZ = Math.cos(cameraAngleX);
+                    const rightX = Math.cos(cameraAngleX);
+                    const rightZ = -Math.sin(cameraAngleX);
                     
-                    playerPos.x += (moveX * rightX + moveZ * forwardX) * speed * delta;
-                    playerPos.z += (moveX * rightZ + moveZ * forwardZ) * speed * delta;
+                    let newX = playerPos.x + (moveX * rightX + moveZ * forwardX) * speed * delta;
+                    let newZ = playerPos.z + (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
-                    playerRotation = Math.atan2(moveX, moveZ);
-                    currentPlayer.rotation.y = playerRotation;
+                    // Simple boundary (can be enhanced with mesh collision)
+                    newX = Math.max(-12, Math.min(12, newX));
+                    newZ = Math.max(-12, Math.min(12, newZ));
+                    
+                    playerPos.x = newX;
+                    playerPos.z = newZ;
+                    
+                    // Rotate player model to face movement direction
+                    const moveAngle = Math.atan2(moveX, moveZ);
+                    currentPlayer.rotation.y = moveAngle;
                 }
-                
-                // Boundaries (larger arena)
-                playerPos.x = Math.max(-12, Math.min(12, playerPos.x));
-                playerPos.z = Math.max(-12, Math.min(12, playerPos.z));
                 
                 // Update player position
                 currentPlayer.position.x = playerPos.x;
                 currentPlayer.position.z = playerPos.z;
-                currentPlayer.position.y = 0;
+                currentPlayer.position.y = playerPos.y;
                 
-                // THIRD PERSON CAMERA
-                const camX = playerPos.x - Math.sin(cameraAngle) * cameraDistance;
-                const camZ = playerPos.z - Math.cos(cameraAngle) * cameraDistance;
-                const camY = cameraHeight;
+                // --- THIRD PERSON CAMERA ---
+                // Camera orbits around player
+                const camX = playerPos.x - Math.sin(cameraAngleX) * cameraDistance;
+                const camZ = playerPos.z - Math.cos(cameraAngleX) * cameraDistance;
+                const camY = playerPos.y + 1.5 + cameraAngleY * 2;
                 
                 camera.position.set(camX, camY, camZ);
-                camera.lookAt(playerPos.x, 1.2, playerPos.z);
+                camera.lookAt(playerPos.x, playerPos.y + 1, playerPos.z);
             }
             
             renderer.render(scene, camera);
@@ -255,7 +298,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Fixed: mouse direction, arena position, model scale');
+        console.log('Team Not Fortress - Fixed: correct controls, gravity, raycast ground');
     </script>
 </body>
 </html>
