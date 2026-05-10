@@ -19,20 +19,6 @@
             font-size: 14px;
             border-left: 4px solid #f90;
         }
-        #health {
-            position: absolute;
-            bottom: 30px;
-            left: 20px;
-            background: rgba(0,0,0,0.7);
-            color: #f66;
-            padding: 8px 15px;
-            border-radius: 8px;
-            font-weight: bold;
-            pointer-events: none;
-            z-index: 10;
-            font-family: monospace;
-            font-size: 18px;
-        }
         #status {
             position: absolute;
             top: 20px;
@@ -60,9 +46,8 @@
 </head>
 <body>
     <div id="ui">⚔️ TEAM NOT FORTRESS | STRIKER CLASS ⚔️</div>
-    <div id="health">❤️ HEALTH: 100</div>
-    <div id="status">🔫 READY</div>
-    <div class="controls-hint">WASD = MOVE | MOUSE = AIM | CLICK = FIRE</div>
+    <div id="status">🔹 MOVEMENT PROTOTYPE</div>
+    <div class="controls-hint">WASD = MOVE | MOUSE = ROTATE CAMERA</div>
 
     <script type="importmap">
         {
@@ -105,8 +90,6 @@
 
         // --- GAME STATE ---
         const keyState = { w: false, s: false, a: false, d: false };
-        let health = 100;
-        let score = 0;
         
         // Player
         let playerModel = null;
@@ -116,11 +99,6 @@
         // Camera offset for 3rd person (behind player)
         let cameraOffset = new THREE.Vector3(-3, 2, 4);
         
-        // Enemy
-        let enemy = null;
-        let enemyHealth = 50;
-        let enemySpeed = 2.5;
-        
         // Movement
         let moveSpeed = 5.0;
         
@@ -128,11 +106,7 @@
         let targetAngle = 0;
         
         // UI
-        const healthDiv = document.getElementById('health');
         const statusDiv = document.getElementById('status');
-        
-        // Raycaster for shooting
-        const raycaster = new THREE.Raycaster();
         
         // --- LOAD MODELS ---
         const loader = new GLTFLoader();
@@ -160,14 +134,11 @@
             scene.add(arena);
             console.log('Arena loaded');
             
-            // Position player at center of arena on ground
             playerPosition.set(0, 0, 0);
             if (playerModel) {
                 playerModel.position.copy(playerPosition);
             }
             camera.position.copy(playerPosition.clone().add(cameraOffset));
-            
-            // Remove fallback ground
             scene.remove(groundPlane);
         }, undefined, (error) => {
             console.warn('Arena not found, using ground plane');
@@ -186,16 +157,8 @@
             playerModel.position.copy(playerPosition);
             scene.add(playerModel);
             console.log('Striker loaded');
-            statusDiv.innerHTML = '✅ READY | WASD MOVE | CLICK SHOOT';
+            statusDiv.innerHTML = '✅ READY | WASD MOVE | MOUSE ROTATE';
         }, undefined, (error) => console.error('Striker error:', error));
-        
-        // Create enemy (red cube for now)
-        const enemyGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-        const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff3366, emissive: 0x441122 });
-        enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
-        enemy.position.set(3, 0, 2);
-        enemy.castShadow = true;
-        scene.add(enemy);
         
         // Add some particles for atmosphere
         const particleCount = 300;
@@ -227,68 +190,28 @@
             if (key === 'd') keyState.d = false;
         });
         
-        // Mouse look for 3rd person
+        // Mouse look for 3rd person (no shooting yet)
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement) {
                 targetAngle += e.movementX * 0.008;
             }
         });
         
-        // Pointer lock
+        // Pointer lock for camera control
         renderer.domElement.addEventListener('click', () => {
             renderer.domElement.requestPointerLock();
         });
         
         document.addEventListener('pointerlockchange', () => {
             if (document.pointerLockElement === renderer.domElement) {
-                statusDiv.innerHTML = '🎯 AIM LOCKED | CLICK TO SHOOT';
+                statusDiv.innerHTML = '🎯 CAMERA LOCKED | WASD TO MOVE';
             } else {
-                statusDiv.innerHTML = '🔒 CLICK SCREEN TO LOCK AIM';
+                statusDiv.innerHTML = '🔒 CLICK SCREEN TO LOCK CAMERA';
             }
         });
-        
-        // Shooting
-        window.addEventListener('click', () => {
-            if (document.pointerLockElement !== renderer.domElement) return;
-            if (health <= 0) return;
-            
-            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-            const intersects = raycaster.intersectObject(enemy);
-            if (intersects.length > 0) {
-                enemyHealth -= 25;
-                statusDiv.innerHTML = '💥 HIT!';
-                setTimeout(() => {
-                    if (statusDiv.innerHTML === '💥 HIT!') statusDiv.innerHTML = '🔫 READY';
-                }, 200);
-                if (enemyHealth <= 0) {
-                    score++;
-                    enemyHealth = 50 + Math.floor(score * 10);
-                    enemy.position.set((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6);
-                    statusDiv.innerHTML = `💀 DEFEATED! SCORE: ${score}`;
-                    setTimeout(() => statusDiv.innerHTML = '🔫 READY', 1500);
-                    health = Math.min(100, health + 10);
-                    updateHealthUI();
-                }
-            } else {
-                statusDiv.innerHTML = '💨 MISS!';
-                setTimeout(() => {
-                    if (statusDiv.innerHTML === '💨 MISS!') statusDiv.innerHTML = '🔫 READY';
-                }, 200);
-            }
-        });
-        
-        function updateHealthUI() {
-            healthDiv.innerHTML = `❤️ HEALTH: ${Math.max(0, health)}`;
-            if (health <= 0) {
-                healthDiv.innerHTML = '💀 YOU DIED 💀';
-                statusDiv.innerHTML = 'GAME OVER - REFRESH TO PLAY';
-            }
-        }
         
         // --- UPDATE MOVEMENT ---
         function updateMovement(deltaTime) {
-            if (health <= 0) return;
-            
             const actualSpeed = moveSpeed * deltaTime;
             let move = new THREE.Vector3(0, 0, 0);
             if (keyState.w) move.z -= 1;
@@ -330,28 +253,6 @@
             camera.lookAt(playerPosition);
         }
         
-        // --- ENEMY AI ---
-        function updateEnemy(deltaTime) {
-            if (health <= 0) return;
-            const direction = new THREE.Vector3().subVectors(playerPosition, enemy.position).normalize();
-            enemy.position.x += direction.x * enemySpeed * deltaTime;
-            enemy.position.z += direction.z * enemySpeed * deltaTime;
-            enemy.position.x = Math.max(-7, Math.min(7, enemy.position.x));
-            enemy.position.z = Math.max(-6, Math.min(6, enemy.position.z));
-            enemy.lookAt(playerPosition);
-            
-            const dist = playerPosition.distanceTo(enemy.position);
-            if (dist < 1.2 && health > 0) {
-                health -= 25 * deltaTime;
-                updateHealthUI();
-                if (health <= 0) {
-                    statusDiv.innerHTML = '💀 GAME OVER 💀';
-                }
-                enemy.position.x += direction.x * 0.8;
-                enemy.position.z += direction.z * 0.8;
-            }
-        }
-        
         // --- ANIMATION LOOP ---
         let lastTime = performance.now();
         
@@ -361,7 +262,6 @@
             lastTime = now;
             
             updateMovement(delta);
-            updateEnemy(delta);
             
             // Animate particles
             particles.rotation.y += 0.5 * delta;
@@ -378,7 +278,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - 3rd Person Mode Loaded');
+        console.log('Team Not Fortress - Movement Prototype (No enemies)');
     </script>
 </body>
 </html>
