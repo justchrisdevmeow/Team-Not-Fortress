@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Team Not Fortress</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Courier New', monospace; cursor: crosshair; }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #0f0;
+            padding: 10px 15px;
+            border-radius: 8px;
+            pointer-events: none;
+            z-index: 10;
+            font-size: 14px;
+            border-left: 4px solid #f90;
+        }
+        #health {
+            position: absolute;
+            bottom: 30px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #f66;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 10;
+            font-family: monospace;
+            font-size: 18px;
+        }
+        #status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #ff0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            pointer-events: none;
+            font-family: monospace;
+        }
+        .controls-hint {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.5);
+            color: #aaa;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 10px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">⚔️ TEAM NOT FORTRESS | STRIKER CLASS ⚔️</div>
+    <div id="health">❤️ HEALTH: 100</div>
+    <div id="status">🔫 READY</div>
+    <div class="controls-hint">WASD = MOVE | MOUSE = AIM | CLICK = FIRE</div>
+
+    <!-- Import Three.js core and add-ons -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- SETUP ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050b1a);
+        scene.fog = new THREE.FogExp2(0x050b1a, 0.008);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 3);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // --- LIGHTS ---
+        // Ambient
+        const ambientLight = new THREE.AmbientLight(0x404060);
+        scene.add(ambientLight);
+        // Main directional light
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+        // Fill light from below
+        const fillLight = new THREE.PointLight(0x4466cc, 0.3);
+        fillLight.position.set(0, -2, 0);
+        scene.add(fillLight);
+        // Rim light
+        const rimLight = new THREE.PointLight(0xffaa66, 0.4);
+        rimLight.position.set(-2, 1, -3);
+        scene.add(rimLight);
+
+        // --- CONTROLS (First-person, but we disable orbit and use pointer lock) ---
+        // We'll use PointerLock for FPS style
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enabled = false; // We'll do our own movement
+
+        // --- GAME STATE ---
+        const keyState = { w: false, s: false, a: false, d: false };
+        let health = 100;
+        let score = 0;
+        let currentWeapon = "Striker Bat";
+        
+        // Player object (we will attach camera to a group or just move camera + have a player model follow)
+        // For simplicity, just move camera and place a model at camera position minus offset
+        let playerModel = null;
+        let playerGroup = new THREE.Group();
+        scene.add(playerGroup);
+        
+        // Enemy
+        let enemy = null;
+        let enemyHealth = 50;
+        let enemySpeed = 2.5;
+        
+        // Bullet raycasting
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        
+        // UI Elements
+        const healthDiv = document.getElementById('health');
+        const statusDiv = document.getElementById('status');
+        
+        // --- LOAD MODELS ---
+        const loader = new GLTFLoader();
+        
+        // Load Arena
+        loader.load('arena.glb', (gltf) => {
+            const arena = gltf.scene;
+            arena.position.set(0, -1, 0);
+            arena.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+            scene.add(arena);
+            console.log('Arena loaded');
+        }, undefined, (error) => console.error('Arena error:', error));
+        
+        // Load Striker (player model)
+        loader.load('striker.glb', (gltf) => {
+            playerModel = gltf.scene;
+            playerModel.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+            playerModel.position.set(0, 0, 0);
+            playerModel.scale.set(0.8, 0.8, 0.8);
+            playerGroup.add(playerModel);
+            console.log('Striker loaded');
+            statusDiv.innerHTML = '✅ READY | USE MOUSE + WASD';
+        }, undefined, (error) => console.error('Striker error:', error));
+        
+        // Create simple enemy cube (placeholder)
+        const enemyGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff3366, emissive: 0x441122 });
+        enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+        enemy.position.set(3, 0.5, 2);
+        enemy.castShadow = true;
+        scene.add(enemy);
+        
+        // Add some floating particles for atmosphere
+        const particleCount = 200;
+        const particlesGeometry = new THREE.BufferGeometry();
+        const particlePositions = new Float32Array(particleCount * 3);
+        for (let i = 0; i < particleCount; i++) {
+            particlePositions[i*3] = (Math.random() - 0.5) * 20;
+            particlePositions[i*3+1] = Math.random() * 5;
+            particlePositions[i*3+2] = (Math.random() - 0.5) * 15;
+        }
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        const particlesMaterial = new THREE.PointsMaterial({ color: 0x88aaff, size: 0.05 });
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particles);
+        
+        // --- FIRST PERSON MOVEMENT (Camera based) ---
+        let cameraAngleX = 0;
+        let cameraAngleY = 0;
+        let moveSpeed = 5.0;
+        
+        // Lock pointer
+        renderer.domElement.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+        
+        document.addEventListener('pointerlockchange', lockChange);
+        document.addEventListener('mozpointerlockchange', lockChange);
+        
+        function lockChange() {
+            if (document.pointerLockElement === renderer.domElement) {
+                document.addEventListener('mousemove', onMouseMove);
+                statusDiv.innerHTML = '🎯 AIM LOCKED | FIGHT!';
+            } else {
+                document.removeEventListener('mousemove', onMouseMove);
+                statusDiv.innerHTML = '🔒 CLICK SCREEN TO LOCK AIM';
+            }
+        }
+        
+        function onMouseMove(e) {
+            cameraAngleY -= e.movementX * 0.002;
+            cameraAngleX -= e.movementY * 0.002;
+            cameraAngleX = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleX));
+        }
+        
+        // Keyboard listeners
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w') keyState.w = true;
+            if (key === 's') keyState.s = true;
+            if (key === 'a') keyState.a = true;
+            if (key === 'd') keyState.d = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w') keyState.w = false;
+            if (key === 's') keyState.s = false;
+            if (key === 'a') keyState.a = false;
+            if (key === 'd') keyState.d = false;
+        });
+        
+        // Shooting
+        window.addEventListener('click', () => {
+            if (document.pointerLockElement !== renderer.domElement) return;
+            shoot();
+        });
+        
+        function shoot() {
+            if (health <= 0) return;
+            // Raycast from center of screen
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObject(enemy);
+            if (intersects.length > 0) {
+                enemyHealth -= 25;
+                statusDiv.innerHTML = '💥 HIT! +25 DAMAGE';
+                setTimeout(() => {
+                    if (statusDiv.innerHTML === '💥 HIT! +25 DAMAGE') statusDiv.innerHTML = '🔫 READY';
+                }, 200);
+                if (enemyHealth <= 0) {
+                    // Respawn enemy with more health
+                    score++;
+                    enemyHealth = 50 + Math.floor(score * 10);
+                    enemy.position.set((Math.random() - 0.5) * 8, 0.5, (Math.random() - 0.5) * 6 + 2);
+                    statusDiv.innerHTML = `💀 ENEMY DEFEATED! SCORE: ${score}`;
+                    setTimeout(() => statusDiv.innerHTML = '🔫 READY', 1500);
+                    // Heal a bit on kill
+                    health = Math.min(100, health + 10);
+                    updateHealthUI();
+                }
+            } else {
+                statusDiv.innerHTML = '💨 MISS!';
+                setTimeout(() => {
+                    if (statusDiv.innerHTML === '💨 MISS!') statusDiv.innerHTML = '🔫 READY';
+                }, 200);
+            }
+        }
+        
+        function updateHealthUI() {
+            healthDiv.innerHTML = `❤️ HEALTH: ${Math.max(0, health)}`;
+            if (health <= 0) {
+                healthDiv.innerHTML = '💀 YOU DIED 💀';
+                statusDiv.innerHTML = 'GAME OVER - REFRESH TO PLAY';
+            }
+        }
+        
+        // --- ENEMY AI (simple follow) ---
+        function updateEnemy(deltaTime) {
+            if (health <= 0) return;
+            // Move enemy towards player (camera position)
+            const playerPos = camera.position;
+            const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
+            enemy.position.x += direction.x * enemySpeed * deltaTime;
+            enemy.position.z += direction.z * enemySpeed * deltaTime;
+            // Keep enemy within arena bounds roughly
+            enemy.position.x = Math.max(-6, Math.min(6, enemy.position.x));
+            enemy.position.z = Math.max(-5, Math.min(5, enemy.position.z));
+            // Rotate enemy to face player
+            enemy.lookAt(playerPos);
+            
+            // Enemy attack: if close enough, damage player
+            const dist = playerPos.distanceTo(enemy.position);
+            if (dist < 1.2 && health > 0) {
+                health -= 25 * deltaTime;
+                updateHealthUI();
+                if (health <= 0) {
+                    statusDiv.innerHTML = '💀 GAME OVER 💀';
+                }
+                // Knockback enemy slightly
+                enemy.position.x += direction.x * 0.5;
+                enemy.position.z += direction.z * 0.5;
+            }
+        }
+        
+        // --- UPDATE MOVEMENT ---
+        let lastTime = performance.now();
+        
+        function updateMovement(deltaTime) {
+            if (health <= 0) return;
+            const actualSpeed = moveSpeed * deltaTime;
+            let move = new THREE.Vector3(0, 0, 0);
+            if (keyState.w) move.z -= 1;
+            if (keyState.s) move.z += 1;
+            if (keyState.a) move.x -= 1;
+            if (keyState.d) move.x += 1;
+            move.normalize();
+            
+            // Transform move direction based on camera orientation (yaw only)
+            const forward = new THREE.Vector3(-Math.sin(cameraAngleY), 0, -Math.cos(cameraAngleY));
+            const right = new THREE.Vector3(Math.cos(cameraAngleY), 0, -Math.sin(cameraAngleY));
+            
+            let deltaPos = new THREE.Vector3(0, 0, 0);
+            deltaPos.addScaledVector(forward, move.z);
+            deltaPos.addScaledVector(right, move.x);
+            deltaPos.multiplyScalar(actualSpeed);
+            
+            camera.position.x += deltaPos.x;
+            camera.position.z += deltaPos.z;
+            
+            // Update player model position if it exists
+            if (playerModel) {
+                playerModel.position.copy(camera.position);
+                playerModel.position.y -= 0.8;
+                // Rotate model to face movement direction
+                if (move.x !== 0 || move.z !== 0) {
+                    const angle = Math.atan2(move.x, move.z);
+                    playerModel.rotation.y = angle;
+                }
+            }
+            
+            // Simple collision with arena bounds (rough)
+            camera.position.x = Math.max(-7, Math.min(7, camera.position.x));
+            camera.position.z = Math.max(-6, Math.min(6, camera.position.z));
+        }
+        
+        // --- CAMERA ROTATION ---
+        function updateCamera() {
+            const euler = new THREE.Euler(cameraAngleX, cameraAngleY, 0, 'YXZ');
+            camera.quaternion.setFromEuler(euler);
+        }
+        
+        // --- ANIMATION LOOP ---
+        function animate() {
+            const now = performance.now();
+            let delta = Math.min(0.033, (now - lastTime) / 1000);
+            lastTime = now;
+            
+            updateMovement(delta);
+            updateCamera();
+            updateEnemy(delta);
+            
+            // Animate particles
+            particles.rotation.y += 0.5 * delta;
+            
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+        
+        // Start the game
+        animate();
+        
+        // Handle window resize
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        console.log('Team Not Fortress - Striker Ready');
+    </script>
+</body>
+</html>
