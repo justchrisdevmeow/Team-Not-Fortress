@@ -113,11 +113,10 @@
             document.getElementById('status').style.color = '#f66';
         });
         
-        // --- LOAD ARENA (center it at 0,0,0) ---
+        // --- LOAD ARENA ---
         let arenaMesh = null;
         loader.load('arena.glb', (gltf) => {
             arenaMesh = gltf.scene;
-            // Center the arena at origin
             arenaMesh.position.set(0, 0, 0);
             arenaMesh.traverse((child) => {
                 if (child.isMesh) {
@@ -131,7 +130,7 @@
             console.log('arena.glb not found');
         });
 
-        // --- KEYBOARD CONTROLS (CORRECT: W=forward, S=back, A=left, D=right) ---
+        // --- KEYBOARD CONTROLS (FIXED: W=forward, S=backward) ---
         const keys = { w: false, s: false, a: false, d: false, space: false };
         
         window.addEventListener('keydown', (e) => {
@@ -158,12 +157,10 @@
             if (key === ' ') keys.space = false;
         });
         
-        // --- MOUSE CONTROL (FIXED: correct direction) ---
+        // --- MOUSE CONTROL ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
-                // Horizontal: move mouse right = look right (increase angle)
                 cameraAngleX += e.movementX * 0.008;
-                // Vertical: move mouse up = look up
                 cameraAngleY += e.movementY * 0.008;
                 cameraAngleY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleY));
             }
@@ -190,7 +187,6 @@
             let foundGround = false;
             
             if (arenaMesh) {
-                // Raycast downward to find ground
                 const rayOrigin = new THREE.Vector3(pos.x, pos.y + 2, pos.z);
                 const rayDirection = new THREE.Vector3(0, -1, 0);
                 const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 5);
@@ -225,11 +221,10 @@
                     playerPos.y = groundY + 0.1;
                     isGrounded = true;
                     
-                    // Jump
                     if (keys.space) {
                         playerVelocityY = jumpPower;
                         isGrounded = false;
-                        keys.space = false; // Single jump
+                        keys.space = false;
                     }
                 } else {
                     playerVelocityY -= gravity * delta;
@@ -237,20 +232,19 @@
                     isGrounded = false;
                 }
                 
-                // --- MOVEMENT (CORRECT: W=forward, S=backward) ---
+                // --- MOVEMENT (FIXED: W=forward, S=backward) ---
                 let moveX = 0;
                 let moveZ = 0;
-                if (keys.w) moveZ -= 1;  // W = forward
-                if (keys.s) moveZ += 1;  // S = backward
-                if (keys.a) moveX -= 1;  // A = left
-                if (keys.d) moveX += 1;  // D = right
+                if (keys.w) moveZ += 1;   // W = forward (+Z)
+                if (keys.s) moveZ -= 1;   // S = backward (-Z)
+                if (keys.a) moveX -= 1;   // A = left (-X)
+                if (keys.d) moveX += 1;   // D = right (+X)
                 
                 if (moveX !== 0 || moveZ !== 0) {
                     const len = Math.hypot(moveX, moveZ);
                     moveX /= len;
                     moveZ /= len;
                     
-                    // Move relative to camera direction
                     const forwardX = Math.sin(cameraAngleX);
                     const forwardZ = Math.cos(cameraAngleX);
                     const rightX = Math.cos(cameraAngleX);
@@ -259,25 +253,21 @@
                     let newX = playerPos.x + (moveX * rightX + moveZ * forwardX) * speed * delta;
                     let newZ = playerPos.z + (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
-                    // Simple boundary (can be enhanced with mesh collision)
                     newX = Math.max(-12, Math.min(12, newX));
                     newZ = Math.max(-12, Math.min(12, newZ));
                     
                     playerPos.x = newX;
                     playerPos.z = newZ;
                     
-                    // Rotate player model to face movement direction
                     const moveAngle = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = moveAngle;
                 }
                 
-                // Update player position
                 currentPlayer.position.x = playerPos.x;
                 currentPlayer.position.z = playerPos.z;
                 currentPlayer.position.y = playerPos.y;
                 
                 // --- THIRD PERSON CAMERA ---
-                // Camera orbits around player
                 const camX = playerPos.x - Math.sin(cameraAngleX) * cameraDistance;
                 const camZ = playerPos.z - Math.cos(cameraAngleX) * cameraDistance;
                 const camY = playerPos.y + 1.5 + cameraAngleY * 2;
@@ -298,7 +288,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Fixed: correct controls, gravity, raycast ground');
+        console.log('Team Not Fortress - Fixed: W=forward, S=backward');
     </script>
 </body>
 </html>
