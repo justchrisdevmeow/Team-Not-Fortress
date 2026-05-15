@@ -211,7 +211,7 @@
                     moveZ /= len;
                     // Camera forward and right vectors
                     const forwardX = Math.sin(yaw);
-                    const forwardZ = Math.cos(yaw);
+                    const forwardZ = -Math.cos(yaw);
                     const rightX = Math.cos(yaw);
                     const rightZ = -Math.sin(yaw);
                     let dx = (moveX * rightX + moveZ * forwardX) * SPEED * delta;
