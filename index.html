@@ -62,16 +62,6 @@
         renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // --- FALLBACK GROUND (collision works immediately) ---
-        const fallbackGround = new THREE.Mesh(
-            new THREE.PlaneGeometry(30, 30),
-            new THREE.MeshStandardMaterial({ color: 0x33aa33, visible: true })
-        );
-        fallbackGround.rotation.x = -Math.PI / 2;
-        fallbackGround.position.y = -0.5;
-        fallbackGround.receiveShadow = true;
-        scene.add(fallbackGround);
-
         // --- LIGHTS ---
         const ambientLight = new THREE.AmbientLight(0x404060);
         scene.add(ambientLight);
@@ -87,16 +77,31 @@
 
         // --- PLAYER ---
         let currentPlayer = null;
-        let playerPos = { x: 0, y: 0, z: 0 };
+        let playerPos = { x: 0, y: 1, z: 0 };
         let playerVelocityY = 0;
-        let isGrounded = false;
         let gravity = 20;
         let jumpPower = 8;
         
         // --- CAMERA SETTINGS ---
-        let cameraAngleX = 0;  // left/right
-        let cameraAngleY = 0;  // up/down
+        let cameraAngleX = 0;
+        let cameraAngleY = 0;
         let cameraDistance = 5;
+        
+        // --- CREATE VISIBLE GROUND (so we can see and collide with it) ---
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a8c3a, roughness: 0.8 });
+        const groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), groundMat);
+        groundPlane.rotation.x = -Math.PI / 2;
+        groundPlane.position.y = -0.5;
+        groundPlane.receiveShadow = true;
+        scene.add(groundPlane);
+        
+        // Grid helper for reference
+        const gridHelper = new THREE.GridHelper(30, 20, 0x88ff88, 0x448844);
+        gridHelper.position.y = -0.4;
+        scene.add(gridHelper);
+        
+        // --- COLLISION GROUND SET (so raycast always works) ---
+        let collisionGround = groundPlane;
         
         // --- LOAD STRIKER MODEL ---
         const loader = new GLTFLoader();
@@ -114,31 +119,39 @@
             });
             scene.add(model);
             currentPlayer = model;
+            currentPlayer.position.copy(playerPos);
             
             document.getElementById('status').innerHTML = '✅ Striker loaded | WASD to move';
             document.getElementById('status').style.color = '#0f0';
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
-            document.getElementById('status').innerHTML = '❌ striker.glb not found';
-            document.getElementById('status').style.color = '#f66';
+            // Create cube as fallback
+            const geo = new THREE.BoxGeometry(0.8, 1.2, 0.8);
+            const mat = new THREE.MeshStandardMaterial({ color: 0xff3366 });
+            const cube = new THREE.Mesh(geo, mat);
+            cube.castShadow = true;
+            cube.receiveShadow = true;
+            scene.add(cube);
+            currentPlayer = cube;
+            currentPlayer.position.copy(playerPos);
+            document.getElementById('status').innerHTML = '⚠️ Using fallback cube | WASD to move';
+            document.getElementById('status').style.color = '#ffaa44';
         });
         
-        // --- LOAD ARENA (overrides fallback if loaded) ---
-        let arenaMesh = fallbackGround;
+        // --- LOAD ARENA (if exists, replaces ground for collision) ---
         loader.load('arena.glb', (gltf) => {
-            scene.remove(arenaMesh);
-            arenaMesh = gltf.scene;
-            arenaMesh.position.set(0, 0, 0);
-            arenaMesh.traverse((child) => {
+            collisionGround = gltf.scene;
+            collisionGround.position.set(0, 0, 0);
+            collisionGround.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
                 }
             });
-            scene.add(arenaMesh);
-            console.log('✅ Arena loaded at center');
+            scene.add(collisionGround);
+            console.log('✅ Arena loaded');
         }, undefined, (error) => {
-            console.log('arena.glb not found, using fallback ground');
+            console.log('arena.glb not found, using plane ground');
         });
 
         // --- KEYBOARD CONTROLS ---
@@ -154,9 +167,6 @@
                 keys.space = true;
                 e.preventDefault();
             }
-            if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
-                e.preventDefault();
-            }
         });
         
         window.addEventListener('keyup', (e) => {
@@ -168,11 +178,11 @@
             if (key === ' ') keys.space = false;
         });
         
-        // --- MOUSE CONTROL (FIXED: inverted to feel natural) ---
+        // --- MOUSE CONTROL (Y NOT INVERTED - as you requested) ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
-                cameraAngleX -= e.movementX * 0.008;  // Fixed: right mouse = turn right
-                cameraAngleY -= e.movementY * 0.008;  // Fixed: up mouse = look up
+                cameraAngleX += e.movementX * 0.008;
+                cameraAngleY += e.movementY * 0.008;  // NOT inverted
                 cameraAngleY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleY));
             }
         });
@@ -192,24 +202,22 @@
             }
         });
         
-        // --- RAYCASTING COLLISION ---
-        function checkCollisionAndGround(pos) {
+        // --- RAYCASTING COLLISION (ALWAYS WORKS) ---
+        function getGroundY(pos) {
             let groundY = -0.5;
-            let foundGround = false;
             
-            if (arenaMesh) {
-                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 2, pos.z);
+            if (collisionGround) {
+                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 1.5, pos.z);
                 const rayDirection = new THREE.Vector3(0, -1, 0);
-                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 5);
-                const intersects = raycaster.intersectObject(arenaMesh, true);
+                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 3);
+                const intersects = raycaster.intersectObject(collisionGround, true);
                 
                 if (intersects.length > 0) {
                     groundY = intersects[0].point.y;
-                    foundGround = true;
                 }
             }
             
-            return { groundY, foundGround };
+            return groundY;
         }
         
         // --- MOVEMENT LOOP ---
@@ -222,34 +230,30 @@
             lastTime = now;
             
             if (currentPlayer) {
-                // --- GRAVITY AND COLLISION ---
-                const groundCheck = checkCollisionAndGround(playerPos);
-                const groundY = groundCheck.groundY;
-                const onGround = playerPos.y <= groundY + 0.2;
+                // --- GRAVITY AND COLLISION (FIXED) ---
+                const groundY = getGroundY(playerPos);
+                const onGround = playerPos.y <= groundY + 0.3;
                 
                 if (onGround) {
                     playerVelocityY = 0;
                     playerPos.y = groundY + 0.1;
-                    isGrounded = true;
                     
                     if (keys.space) {
                         playerVelocityY = jumpPower;
-                        isGrounded = false;
                         keys.space = false;
                     }
                 } else {
                     playerVelocityY -= gravity * delta;
                     playerPos.y += playerVelocityY * delta;
-                    isGrounded = false;
                 }
                 
                 // --- MOVEMENT (FIXED: W=forward, S=back, A=left, D=right) ---
                 let moveX = 0;
                 let moveZ = 0;
-                if (keys.w) moveZ -= 1;   // W = forward
-                if (keys.s) moveZ += 1;   // S = backward
-                if (keys.a) moveX -= 1;   // A = left
-                if (keys.d) moveX += 1;   // D = right
+                if (keys.w) moveZ -= 1;
+                if (keys.s) moveZ += 1;
+                if (keys.a) moveX -= 1;
+                if (keys.d) moveX += 1;
                 
                 if (moveX !== 0 || moveZ !== 0) {
                     const len = Math.hypot(moveX, moveZ);
@@ -265,24 +269,25 @@
                     let newX = playerPos.x + (moveX * rightX + moveZ * forwardX) * speed * delta;
                     let newZ = playerPos.z + (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
-                    newX = Math.max(-12, Math.min(12, newX));
-                    newZ = Math.max(-12, Math.min(12, newZ));
+                    // Boundary
+                    newX = Math.max(-14, Math.min(14, newX));
+                    newZ = Math.max(-14, Math.min(14, newZ));
                     
                     playerPos.x = newX;
                     playerPos.z = newZ;
                     
+                    // Rotate player to face movement
                     const moveAngle = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = moveAngle;
                 }
                 
-                currentPlayer.position.x = playerPos.x;
-                currentPlayer.position.z = playerPos.z;
-                currentPlayer.position.y = playerPos.y;
+                // Apply position
+                currentPlayer.position.copy(playerPos);
                 
-                // --- THIRD PERSON CAMERA (FIXED: camera follows correctly) ---
+                // --- THIRD PERSON CAMERA ---
                 const camX = playerPos.x - Math.sin(cameraAngleX) * cameraDistance;
                 const camZ = playerPos.z - Math.cos(cameraAngleX) * cameraDistance;
-                const camY = playerPos.y + 1.5 + cameraAngleY * 2;
+                const camY = playerPos.y + 1.5 + (cameraAngleY * 2);
                 
                 camera.position.set(camX, camY, camZ);
                 camera.lookAt(playerPos.x, playerPos.y + 1, playerPos.z);
@@ -300,7 +305,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - ALL FIXES APPLIED');
+        console.log('Team Not Fortress - FULLY FIXED: movement, camera (Y not inverted), gravity, collision');
     </script>
 </body>
 </html>
