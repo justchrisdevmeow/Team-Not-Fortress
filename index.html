@@ -16,6 +16,7 @@
             border-radius: 5px;
             z-index: 100;
             font-size: 12px;
+            pointer-events: none;
         }
         #status {
             position: absolute;
@@ -75,6 +76,16 @@
         fillLight.position.set(0, 3, 0);
         scene.add(fillLight);
 
+        // --- FALLBACK GROUND (so collision works even without arena.glb) ---
+        const fallbackGround = new THREE.Mesh(
+            new THREE.PlaneGeometry(30, 30),
+            new THREE.MeshStandardMaterial({ color: 0x33aa33, roughness: 0.8, visible: false })
+        );
+        fallbackGround.rotation.x = -Math.PI / 2;
+        fallbackGround.position.y = -0.5;
+        fallbackGround.receiveShadow = true;
+        scene.add(fallbackGround);
+        
         // --- PLAYER ---
         let currentPlayer = null;
         let playerPos = { x: 0, y: 0, z: 0 };
@@ -84,8 +95,8 @@
         let jumpPower = 8;
         
         // --- CAMERA SETTINGS ---
-        let cameraAngleX = 0;  // left/right
-        let cameraAngleY = 0;  // up/down
+        let cameraAngleX = 0;  // left/right (yaw)
+        let cameraAngleY = 0;  // up/down (pitch)
         let cameraDistance = 5;
         
         // --- LOAD STRIKER MODEL ---
@@ -109,12 +120,20 @@
             document.getElementById('status').style.color = '#0f0';
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
-            document.getElementById('status').innerHTML = '❌ striker.glb not found';
-            document.getElementById('status').style.color = '#f66';
+            // Create fallback player cube
+            const geometry = new THREE.BoxGeometry(0.8, 1.2, 0.8);
+            const material = new THREE.MeshStandardMaterial({ color: 0xff3366 });
+            const fallbackPlayer = new THREE.Mesh(geometry, material);
+            fallbackPlayer.castShadow = true;
+            fallbackPlayer.receiveShadow = true;
+            scene.add(fallbackPlayer);
+            currentPlayer = fallbackPlayer;
+            document.getElementById('status').innerHTML = '⚠️ Using fallback player | WASD to move';
+            document.getElementById('status').style.color = '#ffaa44';
         });
         
         // --- LOAD ARENA ---
-        let arenaMesh = null;
+        let arenaMesh = fallbackGround; // Start with fallback
         loader.load('arena.glb', (gltf) => {
             arenaMesh = gltf.scene;
             arenaMesh.position.set(0, 0, 0);
@@ -127,10 +146,10 @@
             scene.add(arenaMesh);
             console.log('✅ Arena loaded at center');
         }, undefined, (error) => {
-            console.log('arena.glb not found');
+            console.log('arena.glb not found, using fallback ground');
         });
 
-        // --- KEYBOARD CONTROLS (FIXED: W=forward, S=backward) ---
+        // --- KEYBOARD CONTROLS ---
         const keys = { w: false, s: false, a: false, d: false, space: false };
         
         window.addEventListener('keydown', (e) => {
@@ -141,9 +160,6 @@
             if (key === 'd') keys.d = true;
             if (key === ' ') {
                 keys.space = true;
-                e.preventDefault();
-            }
-            if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
                 e.preventDefault();
             }
         });
@@ -157,11 +173,13 @@
             if (key === ' ') keys.space = false;
         });
         
-        // --- MOUSE CONTROL ---
+        // --- MOUSE CONTROL (FIXED: correct direction) ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
+                // Move mouse right → look right (increase angle)
                 cameraAngleX += e.movementX * 0.008;
-                cameraAngleY += e.movementY * 0.008;
+                // Move mouse up → look up (decrease pitch to look up)
+                cameraAngleY -= e.movementY * 0.008;
                 cameraAngleY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleY));
             }
         });
@@ -181,15 +199,15 @@
             }
         });
         
-        // --- RAYCASTING COLLISION ---
+        // --- RAYCASTING COLLISION (FIXED: always uses arenaMesh or fallback) ---
         function checkCollisionAndGround(pos) {
             let groundY = -0.5;
             let foundGround = false;
             
             if (arenaMesh) {
-                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 2, pos.z);
+                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 1.5, pos.z);
                 const rayDirection = new THREE.Vector3(0, -1, 0);
-                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 5);
+                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 3);
                 const intersects = raycaster.intersectObject(arenaMesh, true);
                 
                 if (intersects.length > 0) {
@@ -214,7 +232,7 @@
                 // --- GRAVITY AND COLLISION ---
                 const groundCheck = checkCollisionAndGround(playerPos);
                 const groundY = groundCheck.groundY;
-                const onGround = playerPos.y <= groundY + 0.2;
+                const onGround = playerPos.y <= groundY + 0.3;
                 
                 if (onGround) {
                     playerVelocityY = 0;
@@ -232,11 +250,11 @@
                     isGrounded = false;
                 }
                 
-                // --- MOVEMENT (FIXED: W=forward, S=backward) ---
+                // --- MOVEMENT (FIXED: W=forward, S=backward, A=left, D=right) ---
                 let moveX = 0;
                 let moveZ = 0;
-                if (keys.w) moveZ += 1;   // W = forward (+Z)
-                if (keys.s) moveZ -= 1;   // S = backward (-Z)
+                if (keys.w) moveZ -= 1;   // W = forward (-Z)
+                if (keys.s) moveZ += 1;   // S = backward (+Z)
                 if (keys.a) moveX -= 1;   // A = left (-X)
                 if (keys.d) moveX += 1;   // D = right (+X)
                 
@@ -245,31 +263,35 @@
                     moveX /= len;
                     moveZ /= len;
                     
-                    const forwardX = Math.sin(cameraAngleX);
-                    const forwardZ = Math.cos(cameraAngleX);
+                    // Camera-relative movement
+                    const forwardX = -Math.sin(cameraAngleX);
+                    const forwardZ = -Math.cos(cameraAngleX);
                     const rightX = Math.cos(cameraAngleX);
                     const rightZ = -Math.sin(cameraAngleX);
                     
                     let newX = playerPos.x + (moveX * rightX + moveZ * forwardX) * speed * delta;
                     let newZ = playerPos.z + (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
-                    newX = Math.max(-12, Math.min(12, newX));
-                    newZ = Math.max(-12, Math.min(12, newZ));
+                    // Simple boundary
+                    newX = Math.max(-14, Math.min(14, newX));
+                    newZ = Math.max(-14, Math.min(14, newZ));
                     
                     playerPos.x = newX;
                     playerPos.z = newZ;
                     
+                    // Rotate player to face movement direction
                     const moveAngle = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = moveAngle;
                 }
                 
+                // Update player position
                 currentPlayer.position.x = playerPos.x;
                 currentPlayer.position.z = playerPos.z;
                 currentPlayer.position.y = playerPos.y;
                 
                 // --- THIRD PERSON CAMERA ---
-                const camX = playerPos.x - Math.sin(cameraAngleX) * cameraDistance;
-                const camZ = playerPos.z - Math.cos(cameraAngleX) * cameraDistance;
+                const camX = playerPos.x + Math.sin(cameraAngleX) * cameraDistance;
+                const camZ = playerPos.z + Math.cos(cameraAngleX) * cameraDistance;
                 const camY = playerPos.y + 1.5 + cameraAngleY * 2;
                 
                 camera.position.set(camX, camY, camZ);
@@ -288,7 +310,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Fixed: W=forward, S=backward');
+        console.log('Team Not Fortress - Fully fixed: movement, camera, collision');
     </script>
 </body>
 </html>
