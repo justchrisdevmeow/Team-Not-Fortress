@@ -35,7 +35,7 @@
         ⚔️ TEAM NOT FORTRESS ⚔️<br>
         WASD = Move | Mouse looks around
     </div>
-    <div id="status">🔒 Loading...</div>
+    <div id="status">🔒 Loading arena...</div>
 
     <script type="importmap">
         {
@@ -79,6 +79,7 @@
         let currentPlayer = null;
         let playerPos = { x: 0, y: 1, z: 0 };
         let playerVelocityY = 0;
+        let isGrounded = false;
         let gravity = 20;
         let jumpPower = 8;
         
@@ -87,21 +88,9 @@
         let cameraAngleY = 0;
         let cameraDistance = 5;
         
-        // --- CREATE VISIBLE GROUND (so we can see and collide with it) ---
-        const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a8c3a, roughness: 0.8 });
-        const groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), groundMat);
-        groundPlane.rotation.x = -Math.PI / 2;
-        groundPlane.position.y = -0.5;
-        groundPlane.receiveShadow = true;
-        scene.add(groundPlane);
-        
-        // Grid helper for reference
-        const gridHelper = new THREE.GridHelper(30, 20, 0x88ff88, 0x448844);
-        gridHelper.position.y = -0.4;
-        scene.add(gridHelper);
-        
-        // --- COLLISION GROUND SET (so raycast always works) ---
-        let collisionGround = groundPlane;
+        // --- ARENA (collision mesh) ---
+        let arenaMesh = null;
+        let arenaLoaded = false;
         
         // --- LOAD STRIKER MODEL ---
         const loader = new GLTFLoader();
@@ -121,37 +110,33 @@
             currentPlayer = model;
             currentPlayer.position.copy(playerPos);
             
-            document.getElementById('status').innerHTML = '✅ Striker loaded | WASD to move';
-            document.getElementById('status').style.color = '#0f0';
+            document.getElementById('status').innerHTML = '✅ Striker loaded | Waiting for arena...';
+            document.getElementById('status').style.color = '#ffaa44';
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
-            // Create cube as fallback
-            const geo = new THREE.BoxGeometry(0.8, 1.2, 0.8);
-            const mat = new THREE.MeshStandardMaterial({ color: 0xff3366 });
-            const cube = new THREE.Mesh(geo, mat);
-            cube.castShadow = true;
-            cube.receiveShadow = true;
-            scene.add(cube);
-            currentPlayer = cube;
-            currentPlayer.position.copy(playerPos);
-            document.getElementById('status').innerHTML = '⚠️ Using fallback cube | WASD to move';
-            document.getElementById('status').style.color = '#ffaa44';
+            document.getElementById('status').innerHTML = '❌ striker.glb not found';
+            document.getElementById('status').style.color = '#f66';
         });
         
-        // --- LOAD ARENA (if exists, replaces ground for collision) ---
+        // --- LOAD ARENA (for collision) ---
         loader.load('arena.glb', (gltf) => {
-            collisionGround = gltf.scene;
-            collisionGround.position.set(0, 0, 0);
-            collisionGround.traverse((child) => {
+            arenaMesh = gltf.scene;
+            arenaMesh.position.set(0, 0, 0);
+            arenaMesh.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
                 }
             });
-            scene.add(collisionGround);
+            scene.add(arenaMesh);
+            arenaLoaded = true;
             console.log('✅ Arena loaded');
+            document.getElementById('status').innerHTML = '✅ Arena loaded | WASD to move';
+            document.getElementById('status').style.color = '#0f0';
         }, undefined, (error) => {
-            console.log('arena.glb not found, using plane ground');
+            console.error('Failed to load arena.glb:', error);
+            document.getElementById('status').innerHTML = '❌ arena.glb not found - cannot collide';
+            document.getElementById('status').style.color = '#f66';
         });
 
         // --- KEYBOARD CONTROLS ---
@@ -178,11 +163,11 @@
             if (key === ' ') keys.space = false;
         });
         
-        // --- MOUSE CONTROL (Y NOT INVERTED - as you requested) ---
+        // --- MOUSE CONTROL (not inverted, as you had) ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
                 cameraAngleX += e.movementX * 0.008;
-                cameraAngleY += e.movementY * 0.008;  // NOT inverted
+                cameraAngleY += e.movementY * 0.008;
                 cameraAngleY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleY));
             }
         });
@@ -202,22 +187,28 @@
             }
         });
         
-        // --- RAYCASTING COLLISION (ALWAYS WORKS) ---
-        function getGroundY(pos) {
-            let groundY = -0.5;
-            
-            if (collisionGround) {
-                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 1.5, pos.z);
-                const rayDirection = new THREE.Vector3(0, -1, 0);
-                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 3);
-                const intersects = raycaster.intersectObject(collisionGround, true);
-                
-                if (intersects.length > 0) {
-                    groundY = intersects[0].point.y;
-                }
+        // --- RAYCAST COLLISION AGAINST ARENA MESH ---
+        function getGroundAndCollision(pos) {
+            if (!arenaMesh || !arenaLoaded) {
+                return { groundY: -10, colliding: false };
             }
             
-            return groundY;
+            // Raycast downward to find ground
+            const downRay = new THREE.Raycaster(
+                new THREE.Vector3(pos.x, pos.y + 2, pos.z),
+                new THREE.Vector3(0, -1, 0),
+                0,
+                5
+            );
+            const downHits = downRay.intersectObject(arenaMesh, true);
+            
+            let groundY = -10;
+            if (downHits.length > 0) {
+                groundY = downHits[0].point.y;
+            }
+            
+            // Raycast in 4 directions for wall collision (optional)
+            return { groundY, colliding: false };
         }
         
         // --- MOVEMENT LOOP ---
@@ -229,25 +220,28 @@
             let delta = Math.min(0.033, (now - lastTime) / 1000);
             lastTime = now;
             
-            if (currentPlayer) {
-                // --- GRAVITY AND COLLISION (FIXED) ---
-                const groundY = getGroundY(playerPos);
+            if (currentPlayer && arenaLoaded) {
+                // --- GRAVITY AND GROUND COLLISION ---
+                const { groundY } = getGroundAndCollision(playerPos);
                 const onGround = playerPos.y <= groundY + 0.3;
                 
                 if (onGround) {
                     playerVelocityY = 0;
                     playerPos.y = groundY + 0.1;
+                    isGrounded = true;
                     
                     if (keys.space) {
                         playerVelocityY = jumpPower;
+                        isGrounded = false;
                         keys.space = false;
                     }
                 } else {
                     playerVelocityY -= gravity * delta;
                     playerPos.y += playerVelocityY * delta;
+                    isGrounded = false;
                 }
                 
-                // --- MOVEMENT (FIXED: W=forward, S=back, A=left, D=right) ---
+                // --- MOVEMENT (FIXED: W forward, S back, A left, D right) ---
                 let moveX = 0;
                 let moveZ = 0;
                 if (keys.w) moveZ -= 1;
@@ -260,7 +254,6 @@
                     moveX /= len;
                     moveZ /= len;
                     
-                    // FIXED: Correct forward/right vectors
                     const forwardX = Math.cos(cameraAngleX);
                     const forwardZ = Math.sin(cameraAngleX);
                     const rightX = -Math.sin(cameraAngleX);
@@ -269,25 +262,19 @@
                     let newX = playerPos.x + (moveX * rightX + moveZ * forwardX) * speed * delta;
                     let newZ = playerPos.z + (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
-                    // Boundary
-                    newX = Math.max(-14, Math.min(14, newX));
-                    newZ = Math.max(-14, Math.min(14, newZ));
-                    
                     playerPos.x = newX;
                     playerPos.z = newZ;
                     
-                    // Rotate player to face movement
                     const moveAngle = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = moveAngle;
                 }
                 
-                // Apply position
                 currentPlayer.position.copy(playerPos);
                 
-                // --- THIRD PERSON CAMERA ---
+                // --- CAMERA ---
                 const camX = playerPos.x - Math.sin(cameraAngleX) * cameraDistance;
                 const camZ = playerPos.z - Math.cos(cameraAngleX) * cameraDistance;
-                const camY = playerPos.y + 1.5 + (cameraAngleY * 2);
+                const camY = playerPos.y + 1.5 + cameraAngleY * 2;
                 
                 camera.position.set(camX, camY, camZ);
                 camera.lookAt(playerPos.x, playerPos.y + 1, playerPos.z);
@@ -305,7 +292,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - FULLY FIXED: movement, camera (Y not inverted), gravity, collision');
+        console.log('Team Not Fortress - Raycasting against arena.glb for collision');
     </script>
 </body>
 </html>
