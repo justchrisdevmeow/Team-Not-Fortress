@@ -16,7 +16,6 @@
             border-radius: 5px;
             z-index: 100;
             font-size: 12px;
-            pointer-events: none;
         }
         #status {
             position: absolute;
@@ -63,6 +62,16 @@
         renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
+        // --- FALLBACK GROUND (collision works immediately) ---
+        const fallbackGround = new THREE.Mesh(
+            new THREE.PlaneGeometry(30, 30),
+            new THREE.MeshStandardMaterial({ color: 0x33aa33, visible: true })
+        );
+        fallbackGround.rotation.x = -Math.PI / 2;
+        fallbackGround.position.y = -0.5;
+        fallbackGround.receiveShadow = true;
+        scene.add(fallbackGround);
+
         // --- LIGHTS ---
         const ambientLight = new THREE.AmbientLight(0x404060);
         scene.add(ambientLight);
@@ -76,16 +85,6 @@
         fillLight.position.set(0, 3, 0);
         scene.add(fillLight);
 
-        // --- FALLBACK GROUND (so collision works even without arena.glb) ---
-        const fallbackGround = new THREE.Mesh(
-            new THREE.PlaneGeometry(30, 30),
-            new THREE.MeshStandardMaterial({ color: 0x33aa33, roughness: 0.8, visible: false })
-        );
-        fallbackGround.rotation.x = -Math.PI / 2;
-        fallbackGround.position.y = -0.5;
-        fallbackGround.receiveShadow = true;
-        scene.add(fallbackGround);
-        
         // --- PLAYER ---
         let currentPlayer = null;
         let playerPos = { x: 0, y: 0, z: 0 };
@@ -95,8 +94,8 @@
         let jumpPower = 8;
         
         // --- CAMERA SETTINGS ---
-        let cameraAngleX = 0;  // left/right (yaw)
-        let cameraAngleY = 0;  // up/down (pitch)
+        let cameraAngleX = 0;  // left/right
+        let cameraAngleY = 0;  // up/down
         let cameraDistance = 5;
         
         // --- LOAD STRIKER MODEL ---
@@ -120,21 +119,14 @@
             document.getElementById('status').style.color = '#0f0';
         }, undefined, (error) => {
             console.error('Failed to load striker.glb:', error);
-            // Create fallback player cube
-            const geometry = new THREE.BoxGeometry(0.8, 1.2, 0.8);
-            const material = new THREE.MeshStandardMaterial({ color: 0xff3366 });
-            const fallbackPlayer = new THREE.Mesh(geometry, material);
-            fallbackPlayer.castShadow = true;
-            fallbackPlayer.receiveShadow = true;
-            scene.add(fallbackPlayer);
-            currentPlayer = fallbackPlayer;
-            document.getElementById('status').innerHTML = '⚠️ Using fallback player | WASD to move';
-            document.getElementById('status').style.color = '#ffaa44';
+            document.getElementById('status').innerHTML = '❌ striker.glb not found';
+            document.getElementById('status').style.color = '#f66';
         });
         
-        // --- LOAD ARENA ---
-        let arenaMesh = fallbackGround; // Start with fallback
+        // --- LOAD ARENA (overrides fallback if loaded) ---
+        let arenaMesh = fallbackGround;
         loader.load('arena.glb', (gltf) => {
+            scene.remove(arenaMesh);
             arenaMesh = gltf.scene;
             arenaMesh.position.set(0, 0, 0);
             arenaMesh.traverse((child) => {
@@ -162,6 +154,9 @@
                 keys.space = true;
                 e.preventDefault();
             }
+            if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
+                e.preventDefault();
+            }
         });
         
         window.addEventListener('keyup', (e) => {
@@ -173,13 +168,11 @@
             if (key === ' ') keys.space = false;
         });
         
-        // --- MOUSE CONTROL (FIXED: correct direction) ---
+        // --- MOUSE CONTROL (FIXED: inverted to feel natural) ---
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === renderer.domElement && currentPlayer) {
-                // Move mouse right → look right (increase angle)
-                cameraAngleX += e.movementX * 0.008;
-                // Move mouse up → look up (decrease pitch to look up)
-                cameraAngleY -= e.movementY * 0.008;
+                cameraAngleX -= e.movementX * 0.008;  // Fixed: right mouse = turn right
+                cameraAngleY -= e.movementY * 0.008;  // Fixed: up mouse = look up
                 cameraAngleY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraAngleY));
             }
         });
@@ -199,15 +192,15 @@
             }
         });
         
-        // --- RAYCASTING COLLISION (FIXED: always uses arenaMesh or fallback) ---
+        // --- RAYCASTING COLLISION ---
         function checkCollisionAndGround(pos) {
             let groundY = -0.5;
             let foundGround = false;
             
             if (arenaMesh) {
-                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 1.5, pos.z);
+                const rayOrigin = new THREE.Vector3(pos.x, pos.y + 2, pos.z);
                 const rayDirection = new THREE.Vector3(0, -1, 0);
-                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 3);
+                const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 5);
                 const intersects = raycaster.intersectObject(arenaMesh, true);
                 
                 if (intersects.length > 0) {
@@ -232,7 +225,7 @@
                 // --- GRAVITY AND COLLISION ---
                 const groundCheck = checkCollisionAndGround(playerPos);
                 const groundY = groundCheck.groundY;
-                const onGround = playerPos.y <= groundY + 0.3;
+                const onGround = playerPos.y <= groundY + 0.2;
                 
                 if (onGround) {
                     playerVelocityY = 0;
@@ -250,48 +243,45 @@
                     isGrounded = false;
                 }
                 
-                // --- MOVEMENT (FIXED: W=forward, S=backward, A=left, D=right) ---
+                // --- MOVEMENT (FIXED: W=forward, S=back, A=left, D=right) ---
                 let moveX = 0;
                 let moveZ = 0;
-                if (keys.w) moveZ -= 1;   // W = forward (-Z)
-                if (keys.s) moveZ += 1;   // S = backward (+Z)
-                if (keys.a) moveX -= 1;   // A = left (-X)
-                if (keys.d) moveX += 1;   // D = right (+X)
+                if (keys.w) moveZ -= 1;   // W = forward
+                if (keys.s) moveZ += 1;   // S = backward
+                if (keys.a) moveX -= 1;   // A = left
+                if (keys.d) moveX += 1;   // D = right
                 
                 if (moveX !== 0 || moveZ !== 0) {
                     const len = Math.hypot(moveX, moveZ);
                     moveX /= len;
                     moveZ /= len;
                     
-                    // Camera-relative movement
-                    const forwardX = -Math.sin(cameraAngleX);
-                    const forwardZ = -Math.cos(cameraAngleX);
-                    const rightX = Math.cos(cameraAngleX);
-                    const rightZ = -Math.sin(cameraAngleX);
+                    // FIXED: Correct forward/right vectors
+                    const forwardX = Math.cos(cameraAngleX);
+                    const forwardZ = Math.sin(cameraAngleX);
+                    const rightX = -Math.sin(cameraAngleX);
+                    const rightZ = Math.cos(cameraAngleX);
                     
                     let newX = playerPos.x + (moveX * rightX + moveZ * forwardX) * speed * delta;
                     let newZ = playerPos.z + (moveX * rightZ + moveZ * forwardZ) * speed * delta;
                     
-                    // Simple boundary
-                    newX = Math.max(-14, Math.min(14, newX));
-                    newZ = Math.max(-14, Math.min(14, newZ));
+                    newX = Math.max(-12, Math.min(12, newX));
+                    newZ = Math.max(-12, Math.min(12, newZ));
                     
                     playerPos.x = newX;
                     playerPos.z = newZ;
                     
-                    // Rotate player to face movement direction
                     const moveAngle = Math.atan2(moveX, moveZ);
                     currentPlayer.rotation.y = moveAngle;
                 }
                 
-                // Update player position
                 currentPlayer.position.x = playerPos.x;
                 currentPlayer.position.z = playerPos.z;
                 currentPlayer.position.y = playerPos.y;
                 
-                // --- THIRD PERSON CAMERA ---
-                const camX = playerPos.x + Math.sin(cameraAngleX) * cameraDistance;
-                const camZ = playerPos.z + Math.cos(cameraAngleX) * cameraDistance;
+                // --- THIRD PERSON CAMERA (FIXED: camera follows correctly) ---
+                const camX = playerPos.x - Math.sin(cameraAngleX) * cameraDistance;
+                const camZ = playerPos.z - Math.cos(cameraAngleX) * cameraDistance;
                 const camY = playerPos.y + 1.5 + cameraAngleY * 2;
                 
                 camera.position.set(camX, camY, camZ);
@@ -310,7 +300,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        console.log('Team Not Fortress - Fully fixed: movement, camera, collision');
+        console.log('Team Not Fortress - ALL FIXES APPLIED');
     </script>
 </body>
 </html>
